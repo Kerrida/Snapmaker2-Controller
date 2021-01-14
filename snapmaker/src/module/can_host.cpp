@@ -36,7 +36,7 @@
 CanHost canhost;
 
 /**
- * IRQ callback for can channel, to handle emergent message,
+ * IRQ callback for can channel, to handle emergency message,
  * such as endstop state from linear module
  * Parameter:
  *  message_id  - message id from CAN ID field
@@ -52,7 +52,7 @@ static bool CANIrqCallback(CanStdDataFrame_t &frame) {
 
 
 bool CanHost::IrqCallback(CanStdDataFrame_t &frame) {
-  // handle only emergent and high prio message in IRQ callback
+  // handle only emergency and high prio message in IRQ callback
   if (frame.id.bits.msg_id >= message_region_[MODULE_FUNC_PRIORITY_HIGH][0])
     return false;
 
@@ -68,7 +68,6 @@ bool CanHost::IrqCallback(CanStdDataFrame_t &frame) {
 
 ErrCode CanHost::Init() {
   int i;
-  BaseType_t ret;
 
   for (i = 0; i < MODULE_SUPPORT_MESSAGE_ID_MAX; i++) {
     map_message_function_[i].cb       = 0;
@@ -169,6 +168,21 @@ ErrCode CanHost::SendStdCmd(CanStdFuncCmd_t &function, uint8_t sub_index) {
   return ret;
 }
 
+
+
+void CanHost::SendHeartbeat() {
+  CanPacket_t packet = {CAN_CH_1, CAN_FRAME_STD_REMOTE, 0x01, 0, 0};
+  can.Write(packet);
+  packet.ch = CAN_CH_2;
+  can.Write(packet);
+}
+
+void CanHost::SendEmergencyStop() {
+  CanPacket_t packet = {CAN_CH_1, CAN_FRAME_STD_REMOTE, 0x02, 0, 0};
+  can.Write(packet);
+  packet.ch = CAN_CH_2;
+  can.Write(packet);
+}
 
 ErrCode CanHost::SendStdCmdSync(CanStdFuncCmd_t &cmd, uint32_t timeout_ms, uint8_t retry, uint8_t sub_index) {
   ErrCode  ret;
@@ -314,6 +328,21 @@ ErrCode CanHost::WaitExtCmdAck(CanExtCmd_t &cmd, uint32_t timeout_ms, uint8_t re
 
   return E_TIMEOUT;
 }
+/** Set ReceiveHandler delay time
+ * Adjust the speed according to the amount of data received
+ */
+void CanHost::SetReceiverSpeed(RECEIVER_SPEED_E speed) {
+  switch (speed){
+    case RECEIVER_SPEED_NORMAL:
+      receiver_speed_ = CAN_RECV_SPEED_NORMAL;
+      break;
+    case RECEIVER_SPEED_HIGH:
+      receiver_speed_ = CAN_RECV_SPEED_HIGH;
+      break;
+    default:
+      receiver_speed_ = CAN_RECV_SPEED_NORMAL;
+  }
+}
 
 
 /* To check if we got new event form CAN ISR
@@ -419,7 +448,7 @@ void CanHost::EventHandler(void *parameter) {
     InitModules(mac);
   }
 
-  linear.UpdateMachineSize();
+  linear_p->UpdateMachineSize();
 
   // broadcase modules have been initialized
   xEventGroupSetBits(event_group, EVENT_GROUP_MODULE_READY);
@@ -484,8 +513,8 @@ ErrCode CanHost::AssignMessageRegion() {
   message_region_[MODULE_FUNC_PRIORITY_MEDIUM][0]   += (MODULE_SPARE_MESSAGE_ID_MEDIUM + message_region_[MODULE_FUNC_PRIORITY_HIGH][0]);
   message_region_[MODULE_FUNC_PRIORITY_LOW][0]      = MODULE_SUPPORT_MESSAGE_ID_MAX;
   SERIAL_ECHOLN("Message ID region:");
-  SERIAL_ECHOLNPAIR("emergent: ", 0, " - ", message_region_[MODULE_FUNC_PRIORITY_EMERGENT][0]-1);
-  SERIAL_ECHOLNPAIR("high    : ", message_region_[MODULE_FUNC_PRIORITY_EMERGENT][0], " - ", message_region_[MODULE_FUNC_PRIORITY_HIGH][0]-1);
+  SERIAL_ECHOLNPAIR("emergent: ", 0, " - ", message_region_[MODULE_SPARE_MESSAGE_ID_EMERGENT][0]-1);
+  SERIAL_ECHOLNPAIR("high    : ", message_region_[MODULE_SPARE_MESSAGE_ID_EMERGENT][0], " - ", message_region_[MODULE_FUNC_PRIORITY_HIGH][0]-1);
   SERIAL_ECHOLNPAIR("medium  : ", message_region_[MODULE_FUNC_PRIORITY_HIGH][0], " - ", message_region_[MODULE_FUNC_PRIORITY_MEDIUM][0]-1);
   SERIAL_ECHOLNPAIR("low     : ", message_region_[MODULE_FUNC_PRIORITY_MEDIUM][0], " - ", message_region_[MODULE_FUNC_PRIORITY_LOW][0]-1);
   SERIAL_EOL();
@@ -493,6 +522,26 @@ ErrCode CanHost::AssignMessageRegion() {
   return E_SUCCESS;
 }
 
+void CanHost::ShowModuleVersion(MAC_t mac) {
+  CanExtCmd_t cmd;
+
+  char buffer[50];
+  if (mac.val == MODULE_MAC_ID_INVALID)
+    return;
+
+  // version of modules
+  LOG_I("Module 0x%08X:", mac.bits.id);
+  cmd.data = (uint8_t *)buffer;
+  cmd.mac     = mac;
+  cmd.data[0] = MODULE_EXT_CMD_VERSION_REQ;
+  cmd.length  = 1;
+  if (canhost.SendExtCmdSync(cmd, 500) != E_SUCCESS) {
+    LOG_I("failed or failed to get ver\n");
+  } else {
+    buffer[cmd.length] = 0;
+    LOG_I(" %s\n",  buffer+2);
+  }
+}
 
 ErrCode CanHost::InitModules(MAC_t &mac) {
   int      i;
@@ -505,6 +554,7 @@ ErrCode CanHost::InitModules(MAC_t &mac) {
   if (total_mac_ >= MODULE_SUPPORT_CONNECTED_MAX)
     return E_NO_RESRC;
 
+  ShowModuleVersion(mac);
   // check if this mac is configured
   for (i = 0; i < total_mac_; i++) {
     if (mac.bits.id == mac_[i].bits.id) {
@@ -712,7 +762,8 @@ assign_message_id:
 
 ErrCode CanHost::UpgradeModules(uint32_t fw_addr, uint32_t length) {
   int   i;
-
+  
+  SetReceiverSpeed(RECEIVER_SPEED_HIGH);
   // upgrade dynamic modules
   for (i = 0; i < MODULE_SUPPORT_CONNECTED_MAX; i++) {
 
@@ -720,15 +771,18 @@ ErrCode CanHost::UpgradeModules(uint32_t fw_addr, uint32_t length) {
     if (mac_[i].val == MODULE_MAC_ID_INVALID)
       break;
 
-    if (MODULE_GET_DEVICE_ID(mac_[i].val) >= MODULE_DEVICE_ID_INVALID)
-      continue;
-
     ModuleBase::Upgrade(mac_[i], fw_addr, length);
   }
-
+  SetReceiverSpeed(RECEIVER_SPEED_NORMAL);
+  // Waiting module to enter app
+  vTaskDelay(pdMS_TO_TICKS(200));
   LOG_I("All upgraded!\n");
+  // Restart all module
+  disable_power_domain(POWER_DOMAIN_1|POWER_DOMAIN_2);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  enable_power_domain(POWER_DOMAIN_1|POWER_DOMAIN_2);
+  vTaskDelay(pdMS_TO_TICKS(1000));
 
-  vTaskDelay(100);
   CanPacket_t pkt = {CAN_CH_2, CAN_FRAME_EXT_REMOTE, 0x01, 0, 0};
 
   LOG_I("Scanning modules ...\n");

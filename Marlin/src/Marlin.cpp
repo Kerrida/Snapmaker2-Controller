@@ -277,7 +277,7 @@ void reset_homeoffset() {
   }
 
   LOOP_XYZ(i) {
-    switch (linear.machine_size()) {
+    switch (linear_p->machine_size()) {
       case MACHINE_SIZE_A150:
         home_offset[i] = s_home_offset[i];
         break;
@@ -806,7 +806,7 @@ void idle(
   #endif
 
   if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING)
-    vTaskDelay(portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(1));
 }
 
 /**

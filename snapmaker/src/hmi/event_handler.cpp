@@ -26,6 +26,7 @@
 #include "../module/can_host.h"
 #include "../module/linear.h"
 #include "../module/enclosure.h"
+#include "../module/emergency_stop.h"
 #include "../module/toolhead_laser.h"
 
 #include "../service/bed_level.h"
@@ -546,12 +547,27 @@ static ErrCode SetEnclosureDetection(SSTP_Event_t &event) {
   return enclosure.SetDetection(event);
 }
 
+static ErrCode GetAddonList(SSTP_Event_t &event) {
+  return E_SUCCESS;
+}
+
+static ErrCode GetAddonInfo(SSTP_Event_t &event) {
+  return E_SUCCESS;
+}
+
+static ErrCode GetAddonStopStatus(SSTP_Event_t &event) {
+  return emergency_stop.ReportStatus();
+}
+
 EventCallback_t addon_event_cb[ADDON_OPC_MAX] = {
   UNDEFINED_CALLBACK,
   /* [ADDON_OPC_GET_CHAMBER_STATUS]    =  */{EVENT_ATTR_DEFAULT,  ReportEnclosureStatus},
   /* [ADDON_OPC_SET_CHAMBER_LIGHT]     =  */{EVENT_ATTR_DEFAULT,  SetEnclosureLight},
   /* [ADDON_OPC_SET_CHAMBER_FAN]       =  */{EVENT_ATTR_DEFAULT,  SetEnclosureFan},
-  /* [ADDON_OPC_SET_CHAMBER_DETECTION] =  */{EVENT_ATTR_DEFAULT,  SetEnclosureDetection}
+  /* [ADDON_OPC_SET_CHAMBER_DETECTION] =  */{EVENT_ATTR_DEFAULT,  SetEnclosureDetection},
+  /* [ADDON_OPC_GET_ADDON_LIST]        =  */{EVENT_ATTR_DEFAULT,  GetAddonList},
+  /* [ADDON_OPC_GET_ADDON_INFO]        =  */{EVENT_ATTR_DEFAULT,  GetAddonInfo},
+  /* [ADDON_OPC_GET_ADDON_STOP]        =  */{EVENT_ATTR_DEFAULT,  GetAddonStopStatus},
 };
 
 
@@ -565,19 +581,19 @@ static ErrCode GetModuleMAC(SSTP_Event_t &event) {
 }
 
 static ErrCode SetLinearModuleLength(SSTP_Event_t &event) {
-  return linear.SetLength(event);
+  return linear_p->SetLength(event);
 }
 
 static ErrCode GetLinearModuleLength(SSTP_Event_t &event) {
-  return linear.GetLength(event);
+  return linear_p->GetLength(event);
 }
 
 static ErrCode SetLinearModuleLead(SSTP_Event_t &event) {
-  return linear.SetLead(event);
+  return linear_p->SetLead(event);
 }
 
 static ErrCode GetLinearModuleLead(SSTP_Event_t &event) {
-  return linear.GetLead(event);
+  return linear_p->GetLead(event);
 }
 
 EventCallback_t debug_event_cb[DEBUG_OPC_MAX] = {
